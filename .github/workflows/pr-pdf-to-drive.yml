@@ -24,7 +24,7 @@ jobs:
       - name: Install TeX Live + tooling (Overleaf-like build)
         run: |
           sudo apt-get update
-          sudo apt-get install -y texlive-full latexmk poppler-utils file
+          sudo apt-get install -y texlive-full latexmk poppler-utils file rclone
 
       - name: Compile resume.tex to PDF
         run: |
@@ -51,6 +51,7 @@ jobs:
           pdfinfo "${{ steps.vars.outputs.pdf_name }}" >/dev/null
 
       - name: Upload PDF artifact to workflow run
+        id: upload_artifact
         uses: actions/upload-artifact@v4
         with:
           name: "${{ steps.vars.outputs.artifact_name }}"
@@ -62,14 +63,8 @@ jobs:
       - name: Add artifact usage note to run summary
         run: |
           echo "### Resume PDF artifact" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Download the artifact and extract the ZIP to access the PDF file." >> "$GITHUB_STEP_SUMMARY"
-          echo "- PDF filename: \`${{ steps.vars.outputs.pdf_name }}\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Install rclone
-        if: github.event_name == 'pull_request'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y rclone
+          echo "- Artifact URL (GitHub auth required): ${{ steps.upload_artifact.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Downloaded artifact is a ZIP. Extract to access PDF file: \`${{ steps.vars.outputs.pdf_name }}\`." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Configure rclone (Google Drive)
         if: github.event_name == 'pull_request'
@@ -84,7 +79,7 @@ jobs:
           mkdir -p ~/.config/rclone
           printf '%s' "$RCLONE_CONFIG_CONTENT" > ~/.config/rclone/rclone.conf
 
-      - name: Upload PDF to Google Drive folder
+      - name: Upload PDF to Google Drive folder and create direct links
         if: github.event_name == 'pull_request'
         id: upload_drive
         env:
@@ -96,14 +91,23 @@ jobs:
             exit 1
           }
 
-          rclone copy "${{ steps.vars.outputs.pdf_name }}" "${GDRIVE_REMOTE}:" \
+          rclone copyto "${{ steps.vars.outputs.pdf_name }}" "${GDRIVE_REMOTE}:${{ steps.vars.outputs.pdf_name }}" \
             --drive-root-folder-id "${GDRIVE_FOLDER_ID}" \
             --drive-stop-on-upload-limit \
             --checksum \
             --verbose
 
-          file_link="$(rclone link "${GDRIVE_REMOTE}:${{ steps.vars.outputs.pdf_name }}" --drive-root-folder-id "${GDRIVE_FOLDER_ID}")"
-          echo "file_link=${file_link}" >> "$GITHUB_OUTPUT"
+          view_link="$(rclone link "${GDRIVE_REMOTE}:${{ steps.vars.outputs.pdf_name }}" --drive-root-folder-id "${GDRIVE_FOLDER_ID}")"
+          file_id="$(echo "$view_link" | sed -n 's|.*\/d\/\([^/]*\)\/.*|\1|p')"
+
+          if [ -n "$file_id" ]; then
+            direct_link="https://drive.google.com/uc?export=download&id=${file_id}"
+          else
+            direct_link=""
+          fi
+
+          echo "view_link=${view_link}" >> "$GITHUB_OUTPUT"
+          echo "direct_link=${direct_link}" >> "$GITHUB_OUTPUT"
 
       - name: Comment PR with PDF links
         if: github.event_name == 'pull_request'
@@ -111,14 +115,17 @@ jobs:
         env:
           ARTIFACT_NAME: ${{ steps.vars.outputs.artifact_name }}
           PDF_NAME: ${{ steps.vars.outputs.pdf_name }}
-          DRIVE_FILE_LINK: ${{ steps.upload_drive.outputs.file_link }}
+          ARTIFACT_URL: ${{ steps.upload_artifact.outputs.artifact-url }}
+          DRIVE_VIEW_LINK: ${{ steps.upload_drive.outputs.view_link }}
+          DRIVE_DIRECT_LINK: ${{ steps.upload_drive.outputs.direct_link }}
         with:
           script: |
             const body = [
               '✅ Resume PDF generated successfully.',
               '',
-              `- Artifact: **${process.env.ARTIFACT_NAME}** (download as ZIP from the run artifacts, then extract **${process.env.PDF_NAME}**).`,
-              `- Google Drive: ${process.env.DRIVE_FILE_LINK || '_Drive link unavailable_'}`
+              `- Google Drive (view): ${process.env.DRIVE_VIEW_LINK || '_Unavailable_'}`,
+              `- Google Drive (direct download): ${process.env.DRIVE_DIRECT_LINK || '_Unavailable_'}`,
+              `- GitHub Artifact: ${process.env.ARTIFACT_URL || '_Unavailable_'} (requires GitHub auth; ZIP download, then extract **${process.env.PDF_NAME}**)`
             ].join('\n');
 
             await github.rest.issues.createComment({
