@@ -3,13 +3,11 @@ name: Build resume PDF and upload to Google Drive
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches:
-      - '**'
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: pr-pdf-${{ github.event.pull_request.number || github.ref_name }}
@@ -58,6 +56,8 @@ jobs:
           name: "${{ steps.vars.outputs.artifact_name }}"
           path: "${{ steps.vars.outputs.pdf_name }}"
           if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
       - name: Add artifact usage note to run summary
         run: |
@@ -86,6 +86,7 @@ jobs:
 
       - name: Upload PDF to Google Drive folder
         if: github.event_name == 'pull_request'
+        id: upload_drive
         env:
           GDRIVE_REMOTE: gdrive
           GDRIVE_FOLDER_ID: 1QFzYcqB8TJQujUX8yI-Gjq1wR-5_5jU2
@@ -100,3 +101,29 @@ jobs:
             --drive-stop-on-upload-limit \
             --checksum \
             --verbose
+
+          file_link="$(rclone link "${GDRIVE_REMOTE}:${{ steps.vars.outputs.pdf_name }}" --drive-root-folder-id "${GDRIVE_FOLDER_ID}")"
+          echo "file_link=${file_link}" >> "$GITHUB_OUTPUT"
+
+      - name: Comment PR with PDF links
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_NAME: ${{ steps.vars.outputs.artifact_name }}
+          PDF_NAME: ${{ steps.vars.outputs.pdf_name }}
+          DRIVE_FILE_LINK: ${{ steps.upload_drive.outputs.file_link }}
+        with:
+          script: |
+            const body = [
+              '✅ Resume PDF generated successfully.',
+              '',
+              `- Artifact: **${process.env.ARTIFACT_NAME}** (download as ZIP from the run artifacts, then extract **${process.env.PDF_NAME}**).`,
+              `- Google Drive: ${process.env.DRIVE_FILE_LINK || '_Drive link unavailable_'}`
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
