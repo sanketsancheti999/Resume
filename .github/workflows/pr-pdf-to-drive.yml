@@ -1,0 +1,57 @@
+name: Build resume PDF and upload to Google Drive
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile resume.tex to PDF
+        uses: xu-cheng/latex-action@v3
+        with:
+          root_file: resume.tex
+          latexmk_use_xelatex: true
+
+      - name: Set PDF artifact name
+        id: vars
+        run: |
+          echo "pdf_name=resume-pr-${{ github.event.pull_request.number }}-${{ github.sha }}.pdf" >> "$GITHUB_OUTPUT"
+
+      - name: Rename generated PDF
+        run: |
+          mv resume.pdf "${{ steps.vars.outputs.pdf_name }}"
+
+      - name: Upload PDF artifact to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: "${{ steps.vars.outputs.pdf_name }}"
+          path: "${{ steps.vars.outputs.pdf_name }}"
+
+      - name: Install rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone (Google Drive)
+        env:
+          RCLONE_CONFIG_CONTENT: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
+        run: |
+          if [ -z "$RCLONE_CONFIG_CONTENT" ]; then
+            echo "RCLONE_CONFIG_GDRIVE secret is not set."
+            exit 1
+          fi
+          mkdir -p ~/.config/rclone
+          printf '%s' "$RCLONE_CONFIG_CONTENT" > ~/.config/rclone/rclone.conf
+
+      - name: Upload PDF to Google Drive folder
+        env:
+          GDRIVE_FOLDER_ID: 1QFzYcqB8TJQujUX8yI-Gjq1wR-5_5jU2
+        run: |
+          rclone copy "${{ steps.vars.outputs.pdf_name }}" "gdrive:{${GDRIVE_FOLDER_ID}}" --drive-stop-on-upload-limit
