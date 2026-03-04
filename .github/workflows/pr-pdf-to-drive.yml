@@ -3,12 +3,16 @@ name: Build resume PDF and upload to Google Drive
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: pr-pdf-${{ github.event.pull_request.number }}
+  group: pr-pdf-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -27,9 +31,11 @@ jobs:
 
       - name: Set PDF artifact name
         id: vars
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || 'no-pr' }}
         run: |
           short_sha="${GITHUB_SHA::7}"
-          echo "pdf_name=resume-pr-${{ github.event.pull_request.number }}-${short_sha}.pdf" >> "$GITHUB_OUTPUT"
+          echo "pdf_name=resume-pr-${PR_NUMBER}-${short_sha}.pdf" >> "$GITHUB_OUTPUT"
 
       - name: Rename generated PDF
         run: mv resume.pdf "${{ steps.vars.outputs.pdf_name }}"
@@ -42,9 +48,11 @@ jobs:
           if-no-files-found: error
 
       - name: Install rclone
+        if: github.event_name == 'pull_request'
         run: sudo apt-get update && sudo apt-get install -y rclone
 
       - name: Configure rclone (Google Drive)
+        if: github.event_name == 'pull_request'
         env:
           RCLONE_CONFIG_CONTENT: ${{ secrets.RCLONE_CONFIG_GDRIVE }}
         run: |
@@ -57,6 +65,7 @@ jobs:
           printf '%s' "$RCLONE_CONFIG_CONTENT" > ~/.config/rclone/rclone.conf
 
       - name: Upload PDF to Google Drive folder
+        if: github.event_name == 'pull_request'
         env:
           GDRIVE_REMOTE: gdrive
           GDRIVE_FOLDER_ID: 1QFzYcqB8TJQujUX8yI-Gjq1wR-5_5jU2
