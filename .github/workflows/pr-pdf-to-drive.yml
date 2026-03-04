@@ -29,23 +29,41 @@ jobs:
           root_file: resume.tex
           latexmk_use_xelatex: true
 
-      - name: Set PDF artifact name
+      - name: Set names
         id: vars
         env:
           PR_NUMBER: ${{ github.event.pull_request.number || 'no-pr' }}
         run: |
           short_sha="${GITHUB_SHA::7}"
-          echo "pdf_name=resume-pr-${PR_NUMBER}-${short_sha}.pdf" >> "$GITHUB_OUTPUT"
+          pdf_name="resume-pr-${PR_NUMBER}-${short_sha}.pdf"
+          artifact_name="resume-pdf-pr-${PR_NUMBER}-${short_sha}"
+          echo "pdf_name=${pdf_name}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
 
       - name: Rename generated PDF
         run: mv resume.pdf "${{ steps.vars.outputs.pdf_name }}"
 
+      - name: Validate generated PDF
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
+          test -s "${{ steps.vars.outputs.pdf_name }}"
+          file "${{ steps.vars.outputs.pdf_name }}" | grep -q 'PDF document'
+          pdfinfo "${{ steps.vars.outputs.pdf_name }}" >/dev/null
+
       - name: Upload PDF artifact to workflow run
         uses: actions/upload-artifact@v4
         with:
-          name: "${{ steps.vars.outputs.pdf_name }}"
+          name: "${{ steps.vars.outputs.artifact_name }}"
           path: "${{ steps.vars.outputs.pdf_name }}"
           if-no-files-found: error
+
+      - name: Add artifact usage note to run summary
+        run: |
+          echo "### Resume PDF artifact" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Download the artifact and extract the ZIP to access the PDF file." >> "$GITHUB_STEP_SUMMARY"
+          echo "- PDF filename: \`${{ steps.vars.outputs.pdf_name }}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install rclone
         if: github.event_name == 'pull_request'
