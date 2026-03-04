@@ -23,11 +23,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install TeX Live + tooling (Overleaf-like build)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y texlive-full latexmk poppler-utils file
+
       - name: Compile resume.tex to PDF
-        uses: xu-cheng/latex-action@v3
-        with:
-          root_file: resume.tex
-          latexmk_use_xelatex: true
+        run: |
+          latexmk -xelatex -file-line-error -halt-on-error -interaction=nonstopmode resume.tex
 
       - name: Set names
         id: vars
@@ -45,9 +48,6 @@ jobs:
 
       - name: Validate generated PDF
         run: |
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
-
           test -s "${{ steps.vars.outputs.pdf_name }}"
           file "${{ steps.vars.outputs.pdf_name }}" | grep -q 'PDF document'
           pdfinfo "${{ steps.vars.outputs.pdf_name }}" >/dev/null
@@ -67,7 +67,9 @@ jobs:
 
       - name: Install rclone
         if: github.event_name == 'pull_request'
-        run: sudo apt-get update && sudo apt-get install -y rclone
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone
 
       - name: Configure rclone (Google Drive)
         if: github.event_name == 'pull_request'
